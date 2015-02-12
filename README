@@ -1,0 +1,9 @@
+I extracted this from a set of visualization tools named the Shed (http://devel.se.wtb.tue.nl/trac/shed/browser/trunk/visualization/ganttchart).
+
+It takes a file of time intervals described in the syntax:
+Resource start stop label
+...
+and produces the corresponding gnuplot code.
+
+You can associate a color to each time interval.
+I simplified a little bit the interface and added an option in order to set the maximum time of the plot.
