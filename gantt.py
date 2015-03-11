@@ -36,11 +36,12 @@ class Activity(object):
     @ivar task: Name of the task/activity being performed.
     @type task: C{str}
     """
-    def __init__(self, resource, start, stop, task):
+    def __init__(self, resource, start, stop, task, precedences=[]):
         self.resource = resource
         self.start = start
         self.stop = stop
         self.task = task
+        self.precedences = precedences
 
 class Rectangle(object):
     """
@@ -49,9 +50,19 @@ class Rectangle(object):
     def __init__(self, bottomleft, topright, fillcolor):
         self.bottomleft = bottomleft
         self.topright = topright
+        self.center = ((bottomleft[0]+topright[0])/2, (bottomleft[1]+topright[1])/2)
         self.fillcolor = fillcolor
         self.fillstyle = 'solid 0.8'
         self.linewidth = 2
+
+class Arrow(object):
+    """
+    Container for precedence arrow information
+    """
+    def __init__(self, xyfrom, xyto):
+        self.xyfrom = xyfrom
+        self.xyto = xyto
+
 
 class ColorBook(object):
     """
@@ -132,12 +143,6 @@ class ColorBook(object):
 
         return colors, palettedef, colorprefix
 
-class DummyClass(object):
-    """
-    Dummy class for storing option values in.
-    """
-
-
 def make_rectangles(activities, resource_map, colors):
     """
     Construct a collection of L{Rectangle} for all activities.
@@ -165,6 +170,22 @@ def make_rectangles(activities, resource_map, colors):
     return rectangles
 
 
+def make_arrows(activities, resource_map, colors):
+
+    arrows = []
+    for source in activities:
+        sourcecenter = resource_map[source.resource]
+        sourceright = source.stop
+        for target in source.precedences:
+            targetcenter = resource_map[target.resource]
+            targetleft = target.start
+            xyfrom = (sourceright, sourcecenter)
+            xyto = (targetleft, targetcenter)
+            arrows.append(Arrow(xyfrom, xyto))
+
+    return arrows
+
+
 def load_ganttfile(ganttfile):
     """
     Load the resource/task file.
@@ -176,7 +197,8 @@ def load_ganttfile(ganttfile):
              (resource, start, end, task) activities.
     @rtype:  C{list} of L{Activity}
     """
-    activities = []
+    activities = {}
+    precedences = {}
     for line in open(ganttfile, 'r').readlines():
         line = line.strip().split()
         if len(line) == 0:
@@ -185,9 +207,13 @@ def load_ganttfile(ganttfile):
         start = float(line[1])
         stop = float(line[2])
         task = line[3]
-        activities.append(Activity(resource, start, stop, task))
+        precedences[task] = line[4:]
+        activities[task] = Activity(resource, start, stop, task)
+    
+    for task, a in activities.iteritems():
+        a.precedences = [activities[task] for task in precedences[a.task]]
 
-    return activities
+    return activities.values()
 
 def make_unique_tasks_resources(alphasort, activities):
     """
@@ -222,7 +248,7 @@ def make_unique_tasks_resources(alphasort, activities):
     return tasks, resources
 
 
-def generate_plotdata(activities, resources, tasks, rectangles, options,
+def generate_plotdata(activities, resources, tasks, rectangles, arrows, options,
                      resource_map, color_book):
     """
     Generate Gnuplot lines.
@@ -256,7 +282,8 @@ def generate_plotdata(activities, resources, tasks, rectangles, options,
                        'set key %s' % key_position,
                        'set grid %s' % grid_tics,
                        'set palette %s' % color_book.palette,
-                       'unset colorbox']
+                       'unset colorbox',
+                       'set termopt enhanced']
 
     # Generate gnuplot rectangle objects
     plot_rectangles = (' '.join(['set object %d rectangle' % n,
@@ -266,6 +293,20 @@ def generate_plotdata(activities, resources, tasks, rectangles, options,
                                                       r.fillcolor),
                                  'fillstyle solid 0.8'])
                     for n, r in itertools.izip(itertools.count(1), rectangles))
+
+    plot_arrows = (' '.join(['set arrow',
+                                 'from %f, %0.1f' % a.xyfrom,
+                                 'to %f, %0.1f' % a.xyto,
+                                 'lw 2'])
+                    for a in arrows)
+
+    # Generate labels inside the rectangles
+    plot_labels = (' '.join(['set label "%s"' %t,
+                             'at %f,' % r.center[0],
+                             '%f' % r.center[1],
+                             'rotate by +90',
+                             'center'])
+                  for r, t in zip(rectangles, tasks))
 
     # Generate gnuplot lines
     plot_lines = ['plot ' +
@@ -277,9 +318,9 @@ def generate_plotdata(activities, resources, tasks, rectangles, options,
                                       'linewidth 6'])
                             for t in tasks)]
 
-    return plot_dimensions, plot_rectangles, plot_lines
+    return plot_dimensions, plot_rectangles, plot_labels, plot_arrows, plot_lines
 
-def write_data(plot_dimensions, plot_rectangles, plot_lines, fname):
+def write_data(generators, fname):
     """
     Write plot data out to file or screen.
 
@@ -288,12 +329,10 @@ def write_data(plot_dimensions, plot_rectangles, plot_lines, fname):
     """
     if fname:
         g = open(fname, 'w')
-        g.write('\n'.join(itertools.chain(plot_dimensions, plot_rectangles,
-                                          plot_lines)))
+        g.write('\n'.join(itertools.chain(*generators)))
         g.close()
     else:
-        print '\n'.join(itertools.chain(plot_dimensions, plot_rectangles,
-                                        plot_lines))
+        print '\n'.join(itertools.chain(*generators))
 
 def fmt_opt(short, long, arg, text):
     if arg:
@@ -312,12 +351,12 @@ def compute(options, ganttfile):
 
     color_book = ColorBook(options.colorfile, tasks)
     rectangles = make_rectangles(activities, resource_map, color_book.colors)
+    arrows     = make_arrows(activities, resource_map, color_book.colors)
 
-    plot_dims, plot_rects, plot_lines = \
-            generate_plotdata(activities, resources, tasks, rectangles,
-                              options, resource_map, color_book)
+    generators = generate_plotdata(activities, resources, tasks, rectangles, arrows,
+                    options, resource_map, color_book)
 
-    write_data(plot_dims, plot_rects, plot_lines, options.outputfile)
+    write_data(generators, options.outputfile)
 
 
 def run():
