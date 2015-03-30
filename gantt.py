@@ -176,11 +176,20 @@ def make_arrows(activities, resource_map, colors):
     for source in activities:
         sourcecenter = resource_map[source.resource]
         sourceright = source.stop
+        sourcebottom = sourcecenter - 0.5 * rectangleHeight
+        sourcetop = sourcecenter + 0.5 * rectangleHeight
+
         for target in source.precedences:
             targetcenter = resource_map[target.resource]
             targetleft = target.start
-            xyfrom = (sourceright, sourcecenter)
-            xyto = (targetleft, targetcenter)
+            targetbottom = targetcenter - 0.5 * rectangleHeight
+            targettop = targetcenter + 0.5 * rectangleHeight
+            if sourcecenter > targetcenter:
+                xyfrom = (sourceright, sourcebottom)
+                xyto = (targetleft, targettop)
+            else:
+                xyfrom = (sourceright, sourcetop)
+                xyto = (targetleft, targetbottom)
             arrows.append(Arrow(xyfrom, xyto))
 
     return arrows
@@ -268,7 +277,10 @@ def generate_plotdata(activities, resources, tasks, rectangles, arrows, options,
                                 for item in resource_map.iteritems()),
                      ')'])
     # outside and 2 characters from the graph
-    key_position = 'outside width +2'
+    if options.legend:
+        key_position = 'outside width +2'
+    else:
+        key_position = 'off'
     grid_tics = 'xtics'
 
     # Set plot dimensions
@@ -371,6 +383,9 @@ def run():
     parser.add_argument("-t", "--title", type=str, help='Title', 
             default='', dest='plottitle')
     parser.add_argument("-x", "--xmax", type=int, help='Fixed plot time')
+    parser.add_argument('--legend', dest='legend', action='store_true')
+    parser.add_argument('--no-legend', dest='legend', action='store_false')
+    parser.set_defaults(legend=True)
 
     options = parser.parse_args()
     compute(options, options.filename)
