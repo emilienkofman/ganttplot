@@ -14,7 +14,7 @@
 #
 # gantt.py ganttfile | gnuplot
 
-import itertools, sys
+import itertools
 import argparse
 from ConfigParser import ConfigParser
 
@@ -138,8 +138,11 @@ class ColorBook(object):
         palettedef = 'model RGB defined %s' % se_palettedef
         colorprefix = 'palette frac'
         # Colors are fractions from the palette defined
-        colors = dict((t, '%0.2f' % (float(n)/(len(tasks)-1)))
+        if len(tasks)-1!=0:
+            colors = dict((t, '%0.2f' % (float(n)/(len(tasks)-1)))
                        for n, t in enumerate(tasks))
+        else:
+            colors = {tasks[0]: '0'}
 
         return colors, palettedef, colorprefix
 
@@ -187,9 +190,13 @@ def make_arrows(activities, resource_map, colors):
             if sourcecenter > targetcenter:
                 xyfrom = (sourceright, sourcebottom)
                 xyto = (targetleft, targettop)
-            else:
+            elif sourcecenter < targetcenter:
                 xyfrom = (sourceright, sourcetop)
                 xyto = (targetleft, targetbottom)
+            elif sourcecenter == targetcenter:
+                xyfrom = (sourceright, sourcetop)
+                xyto = (targetleft, targettop)
+
             arrows.append(Arrow(xyfrom, xyto))
 
     return arrows
@@ -332,18 +339,18 @@ def generate_plotdata(activities, resources, tasks, rectangles, arrows, options,
 
     return plot_dimensions, plot_rectangles, plot_labels, plot_arrows, plot_lines
 
-def write_data(generators, fname):
+def write_data(generators, options):
     """
     Write plot data out to file or screen.
 
     @param fname: Name of the output file, if specified.
     @type  fname: C{str}  (??)
     """
-    if fname:
-        g = open(fname, 'w')
+    if options.outputfile:
+        g = open(options.outputfile, 'w')
         g.write('\n'.join(itertools.chain(*generators)))
         g.close()
-    else:
+    elif options.stdout:
         print '\n'.join(itertools.chain(*generators))
 
 def fmt_opt(short, long, arg, text):
@@ -353,7 +360,8 @@ def fmt_opt(short, long, arg, text):
         return '-%s, --%s\t%s' % (short, long, text)
 
 
-def compute(options, ganttfile):
+def compute(options):
+    ganttfile = options.filename
     activities = load_ganttfile(ganttfile)
     tasks, resources = make_unique_tasks_resources(options.alphasort,
                                                    activities)
@@ -368,29 +376,29 @@ def compute(options, ganttfile):
     generators = generate_plotdata(activities, resources, tasks, rectangles, arrows,
                     options, resource_map, color_book)
 
-    write_data(generators, options.outputfile)
+    write_data(generators, options)
 
 
-def run():
-    parser = argparse.ArgumentParser(description='Transform a list of intervals associated with resources into a gantt diagram.')
-    parser.add_argument("filename")
-    parser.add_argument("-o", "--output", type=str, help='output filename', 
+parser = argparse.ArgumentParser(description='Transform a list of intervals associated with resources into a gantt diagram.')
+parser.add_argument("-o", "--output", type=str, help='output filename', 
             default='', dest='outputfile')
-    parser.add_argument("-c", "--color", type=str, help='colors filename', 
+parser.add_argument("-c", "--color", type=str, help='colors filename', 
             default='', dest='colorfile')
-    parser.add_argument("-a", "--alphasort", help='', action="store_true", 
+parser.add_argument("-a", "--alphasort", help='', action="store_true", 
             default=False)
-    parser.add_argument("-t", "--title", type=str, help='Title', 
+parser.add_argument("-O", "--stdout", help='', action="store_true", 
+            default=False)
+parser.add_argument("-t", "--title", type=str, help='Title', 
             default='', dest='plottitle')
-    parser.add_argument("-x", "--xmax", type=int, help='Fixed plot time')
-    parser.add_argument('--legend', dest='legend', action='store_true')
-    parser.add_argument('--no-legend', dest='legend', action='store_false')
-    parser.set_defaults(legend=True)
+parser.add_argument("-x", "--xmax", type=int, help='Fixed plot time')
+parser.add_argument('--legend', dest='legend', action='store_true')
+parser.add_argument('--no-legend', dest='legend', action='store_false')
+parser.set_defaults(legend=True)
 
-    options = parser.parse_args()
-    compute(options, options.filename)
 
 if __name__ == '__main__':
-    run()
+    parser.add_argument("filename")
+    options = parser.parse_args()
+    compute(options)
 
 
