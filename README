@@ -6,8 +6,10 @@ It takes a file of time intervals described in the syntax:
 and produces the corresponding gnuplot code.
 
 You can associate a color to each time interval.
-I simplified a little bit the interface (getopt to argparse) and added an option in order to set the maximum time of the plot.
+I simplified a little bit the interface (getopt to argparse) and added an option in order to set the maximum time of the plot, and to draw arrows in between two time intervals which are not on the same resource
 
 Examples:
-    ./gantt.py solution | gnuplot -p
-    ./gantt.py solution -c colors | gnuplot -p
+    ./gantt.py -O solution | gnuplot -p
+    ./gantt.py -O solution -c colors | gnuplot -p
+
+

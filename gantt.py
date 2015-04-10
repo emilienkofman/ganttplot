@@ -245,13 +245,8 @@ def make_unique_tasks_resources(alphasort, activities):
     @rtype:  C{list} of C{str}, C{list} of C{str}
     """
     # Create list with unique resources and tasks in activity order.
-    resources = []
-    tasks = []
-    for act in activities:
-        if act.resource not in resources:
-            resources.append(act.resource)
-        if act.task not in tasks:
-            tasks.append(act.task)
+    resources = list(set([a.resource for a in activities]))
+    tasks = list(set([a.task for a in activities]))
 
     # Sort such that resources and tasks appear in alphabetical order
     if alphasort:
