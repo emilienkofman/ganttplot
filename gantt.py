@@ -17,6 +17,7 @@
 import itertools
 import argparse
 from ConfigParser import ConfigParser
+import sys, os, stat
 
 rectangleHeight = 0.8  #: Height of a rectangle in units.
 
@@ -202,7 +203,7 @@ def make_arrows(activities, resource_map, colors):
     return arrows
 
 
-def load_ganttfile(ganttfile):
+def parse_gantt(ganttlines):
     """
     Load the resource/task file.
 
@@ -215,7 +216,7 @@ def load_ganttfile(ganttfile):
     """
     activities = {}
     precedences = {}
-    for line in open(ganttfile, 'r').readlines():
+    for line in ganttlines: 
         line = line.strip().split()
         if len(line) == 0:
             continue
@@ -345,7 +346,7 @@ def write_data(generators, options):
         g = open(options.outputfile, 'w')
         g.write('\n'.join(itertools.chain(*generators)))
         g.close()
-    elif options.stdout:
+    elif options.gptO:
         print '\n'.join(itertools.chain(*generators))
 
 def fmt_opt(short, long, arg, text):
@@ -355,9 +356,8 @@ def fmt_opt(short, long, arg, text):
         return '-%s, --%s\t%s' % (short, long, text)
 
 
-def compute(options):
-    ganttfile = options.filename
-    activities = load_ganttfile(ganttfile)
+def compute(options, ganttlines):
+    activities = parse_gantt(ganttlines)
     tasks, resources = make_unique_tasks_resources(options.alphasort,
                                                    activities)
 
@@ -381,7 +381,7 @@ parser.add_argument("-c", "--color", type=str, help='colors filename',
             default='', dest='colorfile')
 parser.add_argument("-a", "--alphasort", help='', action="store_true", 
             default=False)
-parser.add_argument("-O", "--stdout", help='', action="store_true", 
+parser.add_argument("--gptO", help='', action="store_true", 
             default=False)
 parser.add_argument("-t", "--title", type=str, help='Title', 
             default='', dest='plottitle')
@@ -392,8 +392,17 @@ parser.set_defaults(legend=True)
 
 
 if __name__ == '__main__':
-    parser.add_argument("filename")
+    mode = os.fstat(0).st_mode
+    ganttlines = []
+    if stat.S_ISFIFO(mode) or stat.S_ISREG(mode): 
+        ganttlines = sys.stdin.readlines()
+    else: # nothing is passed on stdin, expect a filename
+        parser.add_argument("filename")
+        options = parser.parse_args()
+        with open(options.filename, 'r') as infile:
+            ganttlines = infile.readlines()
+
     options = parser.parse_args()
-    compute(options)
+    compute(options, ganttlines)
 
 
