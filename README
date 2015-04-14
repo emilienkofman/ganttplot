@@ -1,4 +1,4 @@
-I extracted this from a set of visualization tools named the Shed (http://devel.se.wtb.tue.nl/trac/shed/browser/trunk/visualization/ganttchart).
+Yet another gantt ploter that I extracted from a set of visualization tools named the Shed (http://devel.se.wtb.tue.nl/trac/shed/browser/trunk/visualization/ganttchart). It aims at transforming a gantt Domain Specific Language into gnuplot code.
 
 It takes a file of time intervals described in the syntax:
     Resource start stop label
@@ -9,7 +9,13 @@ You can associate a color to each time interval.
 I simplified a little bit the interface (getopt to argparse) and added an option in order to set the maximum time of the plot, and to draw arrows in between two time intervals which are not on the same resource
 
 Examples:
-    ./gantt.py -O solution | gnuplot -p
-    ./gantt.py -O solution -c colors | gnuplot -p
+    ./gantt.py --gptO solution | gnuplot -p
+    ./gantt.py --gptO solution -c colors | gnuplot -p
 
+For input data, many solutions are admissible:
+python gantt.py --gptO  < solution
+cat solution | python gantt.py --gptO
+python gantt.py solution --gptO
 
+Install:
+chmod a+x gantt.py && sudo cp gantt.py /usr/local/bin/
