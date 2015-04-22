@@ -18,6 +18,8 @@ import itertools
 import argparse
 from ConfigParser import ConfigParser
 import sys, os, stat
+from collections import OrderedDict
+from pprint import pprint
 
 rectangleHeight = 0.8  #: Height of a rectangle in units.
 
@@ -43,6 +45,10 @@ class Activity(object):
         self.stop = stop
         self.task = task
         self.precedences = precedences
+    def __str__(self):
+        return self.task+"["+str(self.start)+"-"+str(self.stop)+"]"
+    def __repr__(self):
+        return str(self)
 
 class Rectangle(object):
     """
@@ -232,6 +238,7 @@ def parse_gantt(ganttlines):
 
     return activities.values()
 
+
 def make_unique_tasks_resources(alphasort, activities):
     """
     Construct collections of unique task names and resource names.
@@ -246,8 +253,8 @@ def make_unique_tasks_resources(alphasort, activities):
     @rtype:  C{list} of C{str}, C{list} of C{str}
     """
     # Create list with unique resources and tasks in activity order.
-    resources = list(set([a.resource for a in activities]))
-    tasks = list(set([a.task for a in activities]))
+    resources = list(OrderedDict.fromkeys([a.resource for a in activities]))
+    tasks = list(OrderedDict.fromkeys([a.task for a in activities]))
 
     # Sort such that resources and tasks appear in alphabetical order
     if alphasort:
@@ -346,7 +353,7 @@ def write_data(generators, options):
         g = open(options.outputfile, 'w')
         g.write('\n'.join(itertools.chain(*generators)))
         g.close()
-    elif options.gptO:
+    else:
         print '\n'.join(itertools.chain(*generators))
 
 def fmt_opt(short, long, arg, text):
@@ -380,8 +387,6 @@ parser.add_argument("-o", "--output", type=str, help='output filename',
 parser.add_argument("-c", "--color", type=str, help='colors filename', 
             default='', dest='colorfile')
 parser.add_argument("-a", "--alphasort", help='', action="store_true", 
-            default=False)
-parser.add_argument("--gptO", help='', action="store_true", 
             default=False)
 parser.add_argument("-t", "--title", type=str, help='Title', 
             default='', dest='plottitle')
