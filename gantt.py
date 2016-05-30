@@ -1,27 +1,21 @@
 #!/usr/bin/env python
-#
-# TODO:
-# - Task colors:
-#     - User-defined using config file.
-#     - Automagically chosen from color space.
-#     - Advanced algorithm (contact Hannes Pretorius).
-# - Koos' specs:
-#     - Resources and tasks sorted in read-in order (default)
-#       or alphabetically (flag).
-#     - Have proper gnuplot behavior on windows/x11, eps/pdf, latex terminals.
-#     - Create and implement algorithm for critical path analysis.
-# - Split generic stuff into a Gantt class, and specific stuff into the main.
-#
-# gantt.py ganttfile | gnuplot
+# gantt.py ganttfile | gnuplot -p
 
 import itertools
 import argparse
 from ConfigParser import ConfigParser
 import sys, os, stat
 from collections import OrderedDict
+from pint import UnitRegistry
+import json
+from itertools import combinations
 from pprint import pprint
+import logging as log
+log.basicConfig(format="%(levelname)s: %(message)s", level=log.DEBUG)
 
-rectangleHeight = 0.8  #: Height of a rectangle in units.
+ur = UnitRegistry()
+ur.default_format = '~'
+
 
 class Activity(object):
     """
@@ -39,28 +33,84 @@ class Activity(object):
     @ivar task: Name of the task/activity being performed.
     @type task: C{str}
     """
-    def __init__(self, resource, start, stop, task, precedences=[]):
+    def __init__(self, resource, start, stop, label, precedences=[], color="0xFFFFFF", border=1, bordercolor="0xFFFFFF", alpha=1, cumulative=0):
         self.resource = resource
         self.start = start
         self.stop = stop
-        self.task = task
+        self.label = label
         self.precedences = precedences
+        self.color = color
+        self.border = border
+        self.bordercolor = bordercolor
+        self.alpha = alpha
+        self.cumulative = cumulative
+
     def __str__(self):
-        return self.task+"["+str(self.start)+"-"+str(self.stop)+"]"
+        return self.label
     def __repr__(self):
         return str(self)
+
+    def overlap(self, other):
+        return (self.cumulative == other.cumulative and self.resource == other.resource and not (self.stop<=other.start or other.stop <= self.start))
+
+    def rectangle(self):
+        resmargin=0.1
+        rescenter = self.resource.index
+        resbottom = rescenter-0.5+resmargin
+        restop = rescenter+0.5-resmargin
+        resheight = restop-resbottom
+
+        recstep = resheight/self.resource.cumulative
+        reccenter = resbottom+recstep/2.+recstep*self.cumulative
+        recbottom = reccenter-recstep/2.
+        rectop = reccenter+recstep/2.
+
+        bottomleft = (self.start, recbottom)
+        topright = (self.stop, rectop)
+
+        return Rectangle(bottomleft, topright, self.color, self.border, self.bordercolor, self.alpha)
+
+    def arrows(self):
+        arrows = []
+        rfrom = self.rectangle()
+        for target in self.precedences:
+            rto = target.rectangle()
+            if rfrom.under(rto):
+                xyfrom = rfrom.topright
+                xyto = rto.bottomleft
+            elif rto.under(rfrom):
+                xyfrom = rfrom.bottomright
+                xyto = rto.topleft
+            else:
+                xyfrom = rfrom.topright[0], rfrom.center[1]
+                xyto = rto.topleft[0], rto.center[1]
+            arrows.append(Arrow(xyfrom, xyto))
+        return arrows
+
+
 
 class Rectangle(object):
     """
     Container for rectangle information.
     """
-    def __init__(self, bottomleft, topright, fillcolor):
+    rectangleHeight = 0.8  #: Height of a rectangle in units.
+    def __init__(self, bottomleft, topright, fillcolor, border, bordercolor, alpha=1):
         self.bottomleft = bottomleft
+        self.bottomright = topright[0], bottomleft[1]
         self.topright = topright
+        self.topleft = bottomleft[0], topright[1]
         self.center = ((bottomleft[0]+topright[0])/2, (bottomleft[1]+topright[1])/2)
         self.fillcolor = fillcolor
         self.fillstyle = 'solid 0.8'
-        self.linewidth = 2
+        self.linewidth = border
+        self.bordercolor = bordercolor
+        self.alpha = alpha
+
+    def under(self, other):
+        if self.center[1] < other.center[1]:
+            return True
+        return False
+
 
 class Arrow(object):
     """
@@ -71,170 +121,84 @@ class Arrow(object):
         self.xyto = xyto
 
 
-class ColorBook(object):
+class Resource(object):
     """
-    Class managing colors.
-
-    @ivar colors
-    @ivar palette
-    @ivar prefix
+    Container for resources information
     """
-    def __init__(self, colorfname, tasks):
-        """
-        Construct a ColorBook object.
+    def __init__(self, label, cumulative=1, index=0):
+        self.label = label
+        self.index = index
+        self.cumulative = cumulative
 
-        @param colorfname: Name of the color config file (if specified).
-        @type  colorfname: C{str} or C{None}
+def remove_overlaps(activities):
+    for a in activities:
+        # find every other activity that overlaps a
+        overlaps = [a1 for a1 in activities  if a.overlap(a1)]
+        log.info(overlaps)
+        if len(overlaps)>1:
+            resource = overlaps[0].resource
+            if resource.cumulative < len(overlaps):
+                resource.cumulative = len(overlaps)
+            for i,o in enumerate(overlaps):
+                o.cumulative = i
 
-        @param tasks: Existing task types.
-        @type  tasks: C{list} of C{str}
-        """
-        if colorfname:
-            values = self.load_config(colorfname, tasks)
-        else:
-            values = self.fixed(tasks)
+    for a0, a1 in itertools.combinations(activities, 2):
+        log.info((a0, a1, a0.overlap(a1), a0.cumulative, a1.cumulative))
 
-        self.colors, self.palette, self.prefix = values
+    return activities
 
 
-    def load_config(self, colorfname, tasks):
-        """
-        Read task colors from a configuration file.
-        """
-        palettedef = 'model RGB'
-        colorprefix = 'rgb'
+def merge_activities_same_label(activities):
+    change = True
+    while change:
+        change=False
+        merged = {}
+        for a0, a1 in combinations(activities, 2):
+            if a0.resource==a1.resource and a0.label==a1.label and a0.color==a1.color:
+                if a0.stop==a1.start:
+                    a01 = Activity(a0.resource, a0.start, a1.stop, a0.label, a0.precedences, a0.color)
+                    merged[a01] = (a0, a1)
+                    break
+                elif a1.stop==a0.start:
+                    a10 = Activity(a0.resource, a1.start, a0.stop, a0.label, a0.precedences, a0.color)
+                    merged[a10] = (a1, a0)
+                    break
+        for a, (a0, a1) in merged.iteritems():
+            if a0 in activities: activities.remove(a0)
+            if a1 in activities: activities.remove(a1)
+            activities.append(a)
+            change=True
+    return activities
 
-        # Read in task colors from configuration file
-        config = ConfigParser()
-        config.optionxform = str # makes option names case sensitive
-        config.readfp(open(colorfname, 'r'))
-        # Colors are RGB colornames
-        colors = dict(config.items('Colors'))
 
-        # Raise KeyError if no color is specified for a task
-        nocolors = [t for t in tasks if not colors.has_key(t)]
-        if nocolors:
-            msg = 'Could not find task color for ' + ', '.join(nocolors)
-            raise KeyError(msg)
-
-        return colors, palettedef, colorprefix
-
-    def fixed(self, tasks):
-        """
-        Pick colors from a pre-defined palette.
-        """
-        # Set task colors
-        # SE colors
-        # (see http://w3.wtb.tue.nl/nl/organisatie/systems_engineering/\
-        #      info_for_se_students/how2make_a_poster/pictures/)
-        # Decrease the 0.8 values for less transparent colors.
-        se_palette = {"se_red":   (1.0, 0.8, 0.8),
-                     "se_pink":   (1.0, 0.8, 1.0),
-                     "se_violet": (0.8, 0.8, 1.0),
-                     "se_blue":   (0.8, 1.0, 1.0),
-                     "se_green":  (0.8, 1.0, 0.8),
-                     "se_yellow": (1.0, 1.0, 0.8)}
-        se_gradient = ["se_red", "se_pink", "se_violet",
-                       "se_blue", "se_green", "se_yellow"]
-        se_palettedef = '( ' + \
-                        ', '.join(('%d ' % n +
-                                   ' '.join((str(x) for x in se_palette[c]))
-                                   for n, c in enumerate(se_gradient))) + \
-                        ' )'
-
-        palettedef = 'model RGB defined %s' % se_palettedef
-        colorprefix = 'palette frac'
-        # Colors are fractions from the palette defined
-        if len(tasks)-1!=0:
-            colors = dict((t, '%0.2f' % (float(n)/(len(tasks)-1)))
-                       for n, t in enumerate(tasks))
-        else:
-            colors = {tasks[0]: '0'}
-
-        return colors, palettedef, colorprefix
-
-def make_rectangles(activities, resource_map, colors):
+def parse_json_gantt(ganttlines, options):
     """
-    Construct a collection of L{Rectangle} for all activities.
-
-    @param activities: Activities being performed.
-    @type  activities: C{iterable} of L{Activity}
-
-    @param resource_map: Indices of all resources.
-    @type  resource_map: C{dict} of C{str} to C{int}
-
-    @param colors: Colors for all tasks.
-    @type  colors: C{dict} of C{str} to C{str}
-
-    @return: Collection of rectangles to draw.
-    @rtype:  C{list} of L{Rectangle}
-    """
-    rectangles = []
-    for act in activities:
-        ypos = resource_map[act.resource]
-        bottomleft = (act.start, ypos - 0.5 * rectangleHeight)
-        topright = (act.stop, ypos + 0.5 * rectangleHeight)
-        fillcolor = colors[act.task]
-        rectangles.append(Rectangle(bottomleft, topright, fillcolor))
-
-    return rectangles
-
-
-def make_arrows(activities, resource_map, colors):
-
-    arrows = []
-    for source in activities:
-        sourcecenter = resource_map[source.resource]
-        sourceright = source.stop
-        sourcebottom = sourcecenter - 0.5 * rectangleHeight
-        sourcetop = sourcecenter + 0.5 * rectangleHeight
-
-        for target in source.precedences:
-            targetcenter = resource_map[target.resource]
-            targetleft = target.start
-            targetbottom = targetcenter - 0.5 * rectangleHeight
-            targettop = targetcenter + 0.5 * rectangleHeight
-            if sourcecenter > targetcenter:
-                xyfrom = (sourceright, sourcebottom)
-                xyto = (targetleft, targettop)
-            elif sourcecenter < targetcenter:
-                xyfrom = (sourceright, sourcetop)
-                xyto = (targetleft, targetbottom)
-            elif sourcecenter == targetcenter:
-                xyfrom = (sourceright, sourcetop)
-                xyto = (targetleft, targettop)
-
-            arrows.append(Arrow(xyfrom, xyto))
-
-    return arrows
-
-
-def parse_gantt(ganttlines):
-    """
-    Load the resource/task file.
-
-    @param ganttfile: Name of the gantt file.
-    @type  ganttfile: C{str}
-
-    @return: Activities loaded from the file, collection of
-             (resource, start, end, task) activities.
-    @rtype:  C{list} of L{Activity}
+    Load the resource/task json file
     """
     activities = {}
     precedences = {}
-    for line in ganttlines: 
-        line = line.strip().split()
-        if len(line) == 0:
-            continue
-        resource = line[0]
-        start = float(line[1])
-        stop = float(line[2])
-        task = line[3]
-        precedences[task] = line[4:]
-        activities[task] = Activity(resource, start, stop, task)
-    
-    for task, a in activities.iteritems():
-        a.precedences = [activities[task] for task in precedences[a.task]]
+    schedule = json.loads("\n".join(ganttlines))
+
+    for activityID,data in schedule.iteritems():
+        resource = data['map']
+        if options.pinttime:
+            start = ur(data['start'])
+            stop = ur(data['stop'])
+        else:
+            start = float(data['start'])
+            stop = float(data['stop'])
+        label = data['label']
+        precedences[activityID] = data['precedences']
+        activities[activityID] = \
+            Activity(resource, start, stop, label,
+                     color=data.get("color","0xFFFFFF"),
+                     border=int(data.get("border", "1")),
+                     alpha=float(data.get("alpha", "1")),
+                     bordercolor=data.get("bordercolor", "0x000000"))
+
+    for activityID, activity in activities.iteritems():
+        activity.precedences = [activities[aid] for aid in precedences[activityID]]
+
 
     return activities.values()
 
@@ -254,21 +218,25 @@ def make_unique_tasks_resources(alphasort, activities):
     """
     # Create list with unique resources and tasks in activity order.
     resources = list(OrderedDict.fromkeys([a.resource for a in activities]))
-    tasks = list(OrderedDict.fromkeys([a.task for a in activities]))
+    log.info(resources)
+    labels = [a.label for a in activities]
 
     # Sort such that resources and tasks appear in alphabetical order
     if alphasort:
         resources.sort()
-        tasks.sort()
+        labels.sort()
 
     # Resources are read from top (y=max) to bottom (y=1)
     resources.reverse()
+    resources = {r:Resource(r,index=i) for i,r in enumerate(resources)}
 
-    return tasks, resources
+    for a in activities:
+        a.resource = resources[a.resource]
+
+    return labels, resources.values(), activities
 
 
-def generate_plotdata(activities, resources, tasks, rectangles, arrows, options,
-                     resource_map, color_book):
+def generate_plotdata(activities, resources, tasks, options):
     """
     Generate Gnuplot lines.
     """
@@ -277,14 +245,15 @@ def generate_plotdata(activities, resources, tasks, rectangles, arrows, options,
         xmax = max(act.stop for act in activities)
     else:
         xmax = options.xmax
-    ymin = 0 + (rectangleHeight / 2)
-    ymax = len(resources) + 1 - (rectangleHeight / 2)
-    xlabel = 'time'
+    ymin = -0.5
+    ymax = len(resources)-0.5
+    xlabel = options.xlabel
     ylabel = ''
     title = options.plottitle
+    resourcenames = [r.label for r in resources]
     ytics = ''.join(['(',
-                     ', '.join(('"%s" %d' % item)
-                                for item in resource_map.iteritems()),
+                     ', '.join(('"%s" %d' % (r.label, r.index))
+                                for r in resources),
                      ')'])
     # outside and 2 characters from the graph
     if options.legend:
@@ -297,24 +266,41 @@ def generate_plotdata(activities, resources, tasks, rectangles, arrows, options,
     plot_dimensions = ['set xrange [%f:%f]' % (xmin, xmax),
                        'set yrange [%f:%f]' % (ymin, ymax),
                        'set autoscale x', # extends x axis to next tic mark
-                       'set xlabel "%s"' % xlabel,
-                       'set ylabel "%s"' % ylabel,
+                       'set xlabel "%s" font ",%d"' % (xlabel, options.fontsize),
+                       'set tics font ",12"',
+                       'set ylabel "%s" font ",%d"' % (ylabel, options.fontsize),
                        'set title "%s"' % title,
                        'set ytics %s' % ytics,
                        'set key %s' % key_position,
                        'set grid %s' % grid_tics,
-                       'set palette %s' % color_book.palette,
                        'unset colorbox',
                        'set termopt enhanced']
 
     # Generate gnuplot rectangle objects
-    plot_rectangles = (' '.join(['set object %d rectangle' % n,
+    plot_rectangles = []
+    for n, a in enumerate(activities):
+        r = a.rectangle()
+        rectangle = ['set object %d rectangle' % (n+1),
                                  'from %f, %0.1f' % r.bottomleft,
                                  'to %f, %0.1f' % r.topright,
-                                 'fillcolor %s %s' % (color_book.prefix,
-                                                      r.fillcolor),
-                                 'fillstyle solid 0.8'])
-                    for n, r in itertools.izip(itertools.count(1), rectangles))
+                                 'fillcolor rgb ' + r.fillcolor,
+                                 'linecolor rgb '+r.bordercolor, # TODO: This won't work
+                                 'linewidth '+str(r.linewidth)]
+
+        style="fillstyle transparent solid "+str(r.alpha)
+        if r.linewidth==0:
+            style+=" noborder"
+
+        rectangle.append(style)
+        plot_rectangles.append(' '.join(rectangle))
+
+    for a in activities:
+        log.info(a.arrows())
+
+    arrows = []
+    for a in activities:
+        arrows+=a.arrows()
+    log.info(arrows)
 
     plot_arrows = (' '.join(['set arrow',
                                  'from %f, %0.1f' % a.xyfrom,
@@ -323,20 +309,20 @@ def generate_plotdata(activities, resources, tasks, rectangles, arrows, options,
                     for a in arrows)
 
     # Generate labels inside the rectangles
-    plot_labels = (' '.join(['set label "%s"' %t,
+    rectangles = [a.rectangle() for a in activities]
+    tcut = [(t[:10] + '..') if len(t) > 10 else t for t in tasks]
+    plot_labels = (' '.join(['set label "%s"' %  t,
                              'at %f,' % r.center[0],
                              '%f' % r.center[1],
                              'rotate by +90',
-                             'center'])
-                  for r, t in zip(rectangles, tasks))
+                             'center font ",%d"' % options.fontsize])
+                  for r, t in zip(rectangles, tcut))
 
     # Generate gnuplot lines
     plot_lines = ['plot ' +
                   ', \\\n\t'.join(' '.join(['-1',
                                       'title "%s"' % t,
                                       'with lines',
-                                      'linecolor %s %s ' % (color_book.prefix,
-                                                        color_book.colors[t]),
                                       'linewidth 6'])
                             for t in tasks)]
 
@@ -363,20 +349,31 @@ def fmt_opt(short, long, arg, text):
         return '-%s, --%s\t%s' % (short, long, text)
 
 
+
+def pint_to_float(activities, options):
+    """
+    Convert python pint start/stop dates to floats,
+    and get an xlabel such that it is human readable.
+    """
+    end = max(a.stop for a in activities)
+    unit = end.to_compact().units
+    options.xlabel = "time ("+str(unit)+")"
+    for a in activities:
+        a.start, a.stop = a.start.to(unit).magnitude, a.stop.to(unit).magnitude
+
+
 def compute(options, ganttlines):
-    activities = parse_gantt(ganttlines)
-    tasks, resources = make_unique_tasks_resources(options.alphasort,
-                                                   activities)
+    activities = parse_json_gantt(ganttlines, options)
 
-    # Assign indices to resources
-    resource_map = dict(itertools.izip(resources, itertools.count(1)))
+    if options.mergelabels:
+        activities = merge_activities_same_label(activities)
 
-    color_book = ColorBook(options.colorfile, tasks)
-    rectangles = make_rectangles(activities, resource_map, color_book.colors)
-    arrows     = make_arrows(activities, resource_map, color_book.colors)
+    if options.pinttime:
+        pint_to_float(activities, options)
 
-    generators = generate_plotdata(activities, resources, tasks, rectangles, arrows,
-                    options, resource_map, color_book)
+    tasks, resources, activities = make_unique_tasks_resources(options.alphasort, activities)
+    activities = remove_overlaps(activities)
+    generators = generate_plotdata(activities, resources, tasks, options)
 
     write_data(generators, options)
 
@@ -384,17 +381,19 @@ def compute(options, ganttlines):
 parser = argparse.ArgumentParser(description='Transform a list of intervals associated with resources into a gantt diagram.')
 parser.add_argument("-o", "--output", type=str, help='output filename', 
             default='', dest='outputfile')
-parser.add_argument("-c", "--color", type=str, help='colors filename', 
-            default='', dest='colorfile')
-parser.add_argument("-a", "--alphasort", help='', action="store_true", 
+parser.add_argument("-a", "--alphasort", help='', action="store_true", default=False)
+parser.add_argument("--mergelabels", help='merge adjacent tasks with same labels', action="store_true", default=False)
+parser.add_argument("-p", "--pinttime", help='Use python pint unit system for start/stop times', action="store_true",
             default=False)
 parser.add_argument("-t", "--title", type=str, help='Title', 
             default='', dest='plottitle')
-parser.add_argument("-x", "--xmax", type=int, help='Fixed plot time')
+parser.add_argument("-l", "--xlabel", type=str, help='x label', 
+            default='time', dest='xlabel')
+parser.add_argument("-x", "--xmax", type=float, help='Fixed plot time')
+parser.add_argument("-f", "--fontsize", type=int, help='', default=12)
 parser.add_argument('--legend', dest='legend', action='store_true')
 parser.add_argument('--no-legend', dest='legend', action='store_false')
-parser.set_defaults(legend=True)
-
+parser.set_defaults(legend=False)
 
 if __name__ == '__main__':
     mode = os.fstat(0).st_mode
