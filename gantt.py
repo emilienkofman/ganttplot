@@ -11,7 +11,8 @@ import json
 from itertools import combinations
 from pprint import pprint
 import logging as log
-log.basicConfig(format="%(levelname)s: %(message)s", level=log.DEBUG)
+log.basicConfig(format="%(levelname)s: %(message)s", level=log.INFO)
+from operator import xor
 
 ur = UnitRegistry()
 ur.default_format = '~'
@@ -51,7 +52,7 @@ class Activity(object):
         return str(self)
 
     def overlap(self, other):
-        return (self.cumulative == other.cumulative and self.resource == other.resource and not (self.stop<=other.start or other.stop <= self.start))
+        return (self.cumulative == other.cumulative and self.resource == other.resource and not xor(self.stop <= other.start,other.stop <= self.start))
 
     def rectangle(self):
         resmargin=0.1
@@ -126,24 +127,32 @@ class Resource(object):
     Container for resources information
     """
     def __init__(self, label, cumulative=1, index=0):
-        self.label = label
+        # TODO: remove this hack and parse a json model of the resources instead
+        if '_' in label:
+            self.label = label.split('_')[1]
+        else:
+            self.label = label
         self.index = index
         self.cumulative = cumulative
 
-def remove_overlaps(activities):
-    for a in activities:
-        # find every other activity that overlaps a
-        overlaps = [a1 for a1 in activities  if a.overlap(a1)]
-        log.info(overlaps)
-        if len(overlaps)>1:
-            resource = overlaps[0].resource
-            if resource.cumulative < len(overlaps):
-                resource.cumulative = len(overlaps)
-            for i,o in enumerate(overlaps):
-                o.cumulative = i
+def exist_overlap(activities):
+    for a,b in combinations(activities,2):
+        if a.overlap(b):
+            return True
+    return False
 
-    for a0, a1 in itertools.combinations(activities, 2):
-        log.info((a0, a1, a0.overlap(a1), a0.cumulative, a1.cumulative))
+def activity_overlap(a,activities):
+    for b in activities:
+        if b.overlap(a) and b!=a:
+            return True
+    return False
+
+def remove_overlaps(activities):
+    while(exist_overlap(activities)):
+        for a in activities:
+            if activity_overlap(a, activities):
+                a.cumulative = (a.cumulative + 1) % a.resource.cumulative
+                break
 
     return activities
 
@@ -177,10 +186,12 @@ def parse_json_gantt(ganttlines, options):
     """
     activities = {}
     precedences = {}
-    schedule = json.loads("\n".join(ganttlines))
+    problem = json.loads("\n".join(ganttlines))
+    tasks = problem['Tasks']
+    resources = problem['Resources']
 
-    for activityID,data in schedule.iteritems():
-        resource = data['map']
+    for activityID,data in tasks.iteritems():
+        resource = str(data['map'])
         if options.pinttime:
             start = ur(data['start'])
             stop = ur(data['stop'])
@@ -196,44 +207,16 @@ def parse_json_gantt(ganttlines, options):
                      alpha=float(data.get("alpha", "1")),
                      bordercolor=data.get("bordercolor", "0x000000"))
 
+    resources = {str(rk): Resource(r["label"], r.get("cumulative",1),index=i) for i, (rk, r) in enumerate(resources.iteritems())}
+    log.info(resources)
+
+    for ak,a in activities.iteritems():
+        a.resource = resources[a.resource]
+
     for activityID, activity in activities.iteritems():
         activity.precedences = [activities[aid] for aid in precedences[activityID]]
 
-
-    return activities.values()
-
-
-def make_unique_tasks_resources(alphasort, activities):
-    """
-    Construct collections of unique task names and resource names.
-
-    @param alphasort: Sort resources and tasks alphabetically.
-    @type  alphasort: C{bool}
-
-    @param activities: Activities to draw.
-    @type  activities: C{list} of L{Activity}
-
-    @return: Collections of task-types and resources.
-    @rtype:  C{list} of C{str}, C{list} of C{str}
-    """
-    # Create list with unique resources and tasks in activity order.
-    resources = list(OrderedDict.fromkeys([a.resource for a in activities]))
-    log.info(resources)
-    labels = [a.label for a in activities]
-
-    # Sort such that resources and tasks appear in alphabetical order
-    if alphasort:
-        resources.sort()
-        labels.sort()
-
-    # Resources are read from top (y=max) to bottom (y=1)
-    resources.reverse()
-    resources = {r:Resource(r,index=i) for i,r in enumerate(resources)}
-
-    for a in activities:
-        a.resource = resources[a.resource]
-
-    return labels, resources.values(), activities
+    return activities.values(), resources.values()
 
 
 def generate_plotdata(activities, resources, tasks, options):
@@ -250,7 +233,6 @@ def generate_plotdata(activities, resources, tasks, options):
     xlabel = options.xlabel
     ylabel = ''
     title = options.plottitle
-    resourcenames = [r.label for r in resources]
     ytics = ''.join(['(',
                      ', '.join(('"%s" %d' % (r.label, r.index))
                                 for r in resources),
@@ -294,13 +276,9 @@ def generate_plotdata(activities, resources, tasks, options):
         rectangle.append(style)
         plot_rectangles.append(' '.join(rectangle))
 
-    for a in activities:
-        log.info(a.arrows())
-
     arrows = []
     for a in activities:
         arrows+=a.arrows()
-    log.info(arrows)
 
     plot_arrows = (' '.join(['set arrow',
                                  'from %f, %0.1f' % a.xyfrom,
@@ -363,7 +341,7 @@ def pint_to_float(activities, options):
 
 
 def compute(options, ganttlines):
-    activities = parse_json_gantt(ganttlines, options)
+    activities, resources = parse_json_gantt(ganttlines, options)
 
     if options.mergelabels:
         activities = merge_activities_same_label(activities)
@@ -371,7 +349,7 @@ def compute(options, ganttlines):
     if options.pinttime:
         pint_to_float(activities, options)
 
-    tasks, resources, activities = make_unique_tasks_resources(options.alphasort, activities)
+    tasks = [activity.label for activity in activities]
     activities = remove_overlaps(activities)
     generators = generate_plotdata(activities, resources, tasks, options)
 

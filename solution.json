@@ -1,0 +1,14 @@
+{
+    "Resources":{
+        "0": {
+            "label": "R0"
+        },
+        "1": {
+            "label": "R1"
+        }
+    },
+    "Tasks": {
+        "0": {"precedences": ["1"], "start": "0.10", "stop": "0.230", "label": "foo", "map":0, "color":"0x00F000", "border":"0", "alpha":"0.254"},
+        "1": {"precedences": [], "start": "0.30", "stop": "0.450", "label": "bar", "map": 1}
+    }
+}

@@ -1,21 +1,17 @@
 Yet another gantt ploter that I extracted from a set of visualization tools named the Shed (http://devel.se.wtb.tue.nl/trac/shed/browser/trunk/visualization/ganttchart). It aims at transforming a gantt Domain Specific Language into gnuplot code.
+It takes a file of time intervals described in json, and produces the corresponding gnuplot code. You can associate a color to each time interval.
 
-It takes a file of time intervals described in the syntax:
-    Resource start stop label
-...
-and produces the corresponding gnuplot code.
+EXAMPLES:
+    ./gantt.py solution.json | gnuplot -p
 
-You can associate a color to each time interval.
-I simplified a little bit the interface (getopt to argparse) and added an option in order to set the maximum time of the plot, and to draw arrows in between two time intervals which are not on the same resource
-
-Examples:
-    ./gantt.py --gptO solution | gnuplot -p
-    ./gantt.py --gptO solution -c colors | gnuplot -p
-
-For input data, many solutions are admissible:
-python gantt.py --gptO  < solution
-cat solution | python gantt.py --gptO
-python gantt.py solution --gptO
-
-Install:
+INSTALL:
 chmod a+x gantt.py && sudo cp gantt.py /usr/local/bin/
+
+CHANGELOG
+November 2015:
+I added the ability to parse json files.
+
+April 2015:
+Took it from http://wiki.mn.wtb.tue.nl/wonham/gantt.py.
+I simplified a little bit the interface (getopt to argparse) and added an option in order to set the maximum time of the plot, and to draw arrows in between two time intervals which are not on the same resource.
+
